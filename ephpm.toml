@@ -1,0 +1,8 @@
+[server]
+listen = "127.0.0.1:8299"
+document_root = "/root/mwx/www"
+
+[[middleware]]
+library = "/root/mwx/libelephc_mw.so"
+order   = 10
+config  = {}

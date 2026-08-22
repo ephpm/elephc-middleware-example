@@ -1,0 +1,10 @@
+# build output
+*.so
+*.o
+test_host
+libmw_php.so
+libelephc_mw.so
+
+# composer
+vendor/
+composer.lock
