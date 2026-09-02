@@ -31,6 +31,13 @@ typedef struct {
     size_t          response_headers_len;
 } ephpm_response_t;
 
+/* Minor-0 shape, matching the shim's mirror. This harness ADVERTISES minor 0
+ * (`host.abi_version = EPHPM_ABI_V1`, whose low three bytes are zero) and that
+ * has to stay true: a module is entitled to read any slot the advertised minor
+ * promises, so claiming a minor whose trailing fields this struct does not have
+ * would be a read past the end of the table. If this harness ever grows the
+ * minor-1/2/3 slots, it must grow the advertised minor with them — in the same
+ * edit, and in the same order as `crates/ephpm-middleware/src/abi.rs`. */
 typedef struct {
     uint32_t abi_version;
     const char *(*request_method)(const ephpm_request_t *);
@@ -58,6 +65,10 @@ static const char *r_query(const ephpm_request_t *r)  { (void)r; return ""; }
 static const char *r_ip(const ephpm_request_t *r)     { (void)r; return "127.0.0.1"; }
 static const char *r_hdr(const ephpm_request_t *r, const char *n) { (void)r; (void)n; return NULL; }
 static size_t      r_body(const ephpm_request_t *r, const uint8_t **o) { (void)r; *o = NULL; return 0; }
+/* The canonical site key, as a real minor-3 host would supply it. A real host
+ * returns NULL here for a request that matched no virtual host — including on
+ * every request of a single-site node, which has no virtual hosts at all — so
+ * any shim code that starts reading this slot must handle NULL. */
 static const char *r_vhost(const ephpm_request_t *r)  { (void)r; return "localhost"; }
 
 static int32_t kv_get(const uint8_t *k, size_t kl, uint8_t **o, size_t *ol) {

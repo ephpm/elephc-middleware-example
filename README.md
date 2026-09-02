@@ -84,6 +84,39 @@ cluster-wide rate limiter is one `kv_incr_ttl` call.
 Because the contract is *just C*, the language that produced the `.so` is
 irrelevant to ePHPm. That is the opening elephc walks through.
 
+#### ABI version: this shim targets major 1, minor 0
+
+The **major byte** gates compatibility and `ephpm_middleware_init` refuses a
+host whose major it was not built for. The lower three bytes are an additive
+**minor** level, and the table is passed by pointer, so a module that declares a
+*shorter* mirror of the host table stays correct on a newer host — it simply
+cannot see the slots it did not declare. That is what this shim does, and why
+it has needed no change as the ABI has grown to minor 3.
+
+If you extend the shim, two things from **minor 3**
+([ephpm#448](https://github.com/ephpm/ephpm/pull/448)) matter, because they
+redefined slots this shim already declares rather than only appending new ones:
+
+- **`request_vhost_id` can return NULL, and is now the canonical site key.** It
+  is the vhost *directory name* the router resolved — not the `Host` header,
+  and not the header even normalised — and it is NULL when the request matched
+  no virtual host (which on a single-site node is every request). Since this
+  shim's job is to flatten request fields into C strings for the PHP side,
+  forwarding it means NULL-checking it first: `strlen(NULL)` is a segfault
+  reachable by sending an unknown `Host`. Use NULL as "no tenant" — that is the
+  point of it ([ephpm#390](https://github.com/ephpm/ephpm/issues/390)).
+- **`kv_get`/`kv_set`/`kv_incr`/`kv_incr_ttl` are per-tenant.** On a
+  multi-tenant node they resolve the serving vhost's own keyspace — the same
+  store that vhost's PHP reaches through `ephpm_kv_*` — instead of the
+  process-global one ([ephpm#376](https://github.com/ephpm/ephpm/issues/376)).
+  Node-wide state needs the appended `kv_*_global` slots, which are minor 3 and
+  which this shim's minor-0 mirror does not declare; adding them means adding
+  *every* preceding minor-1/2/3 field first, in `abi.rs` order.
+
+Neither changes anything on a single-site node, and neither affects this
+example as it stands — it calls only `request_method`, `request_path` and
+`log`.
+
 ### elephc compiles PHP to a native cdylib
 
 elephc is a real, shipping, MIT-licensed PHP-to-native AOT compiler
@@ -298,6 +331,12 @@ elephc's coverage improves.
   through the shim's host-table struct and the struct layout mirrors
   `abi.rs`, but only `log` was actually exercised end to end. A
   cluster-replicated rate limiter in elephc-PHP is **plausible but untested**.
+  Note also that since ABI minor 3 those callbacks are **per serving vhost**,
+  so such a limiter would be per-tenant rather than node-wide unless it used
+  the `kv_*_global` slots — which this minor-0 mirror does not declare.
+- **`request_vhost_id` is not exercised either**, and since minor 3 it can
+  return NULL. Anything that starts forwarding it to the PHP side needs a NULL
+  check; see the ABI-version note above.
 - Long-running stability, memory behaviour under sustained traffic, and
   `elephc_shutdown` semantics on server reload.
 - Any `ACTION_RESPOND` (short-circuit) path — only `ACTION_CONTINUE` was
