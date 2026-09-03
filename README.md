@@ -113,9 +113,14 @@ redefined slots this shim already declares rather than only appending new ones:
   which this shim's minor-0 mirror does not declare; adding them means adding
   *every* preceding minor-1/2/3 field first, in `abi.rs` order.
 
-Neither changes anything on a single-site node, and neither affects this
-example as it stands — it calls only `request_method`, `request_path` and
-`log`.
+Neither affects this example as it stands — it calls only `request_method`,
+`request_path` and `log`. But do not read the first one as a multi-tenant-only
+concern: **the `kv_*` change is a no-op on a single-site node; the
+`request_vhost_id` change is the opposite of one.** A single-site node has no
+virtual hosts to match, so the slot returns NULL on *every* request there,
+where in minor ≤ 2 it returned the `Host` and was never NULL. The most common
+deployment shape is the one where an un-NULL-checked `strlen` crashes on the
+first request, not on an exotic one.
 
 ### elephc compiles PHP to a native cdylib
 
