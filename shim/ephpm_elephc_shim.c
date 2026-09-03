@@ -34,7 +34,41 @@
 #include <stdio.h>
 #include <pthread.h>
 
-/* ---- ePHPm ABI v1 (mirrors crates/ephpm-middleware/src/abi.rs) ---------- */
+/* ---- ePHPm ABI v1 (mirrors crates/ephpm-middleware/src/abi.rs) ----------
+ *
+ * MINOR LEVEL: this mirror is deliberately the **minor 0** shape.
+ *
+ * The host's table has grown since — minor 1 appended the response-phase
+ * accessors, minor 2 the scheme / is_secure / normalized-host accessors, and
+ * minor 3 the five process-global KV slots. Growth within major 1 is purely
+ * additive and the table is passed by pointer, so a shorter mirror stays
+ * correct: every field declared below is at the same offset it has ever been
+ * at, and the shim simply cannot see the ones it does not declare. Do NOT add
+ * a trailing field here without adding every field before it, in order.
+ *
+ * The version check is on the MAJOR byte only, which is the whole
+ * compatibility contract; the minor is an additive capability level. If this
+ * shim ever wants a newer slot, it must first check
+ * `(host->abi_version & 0x00FFFFFF) >= <the minor that added it>`.
+ *
+ * MINOR 3 REDEFINED TWO SLOTS DECLARED BELOW (ephpm#390 / ephpm#376). This
+ * shim calls neither, so nothing here changes — but anyone extending it must
+ * know:
+ *
+ *   - `request_vhost_id` returns the router's CANONICAL SITE KEY (the vhost
+ *     directory name), not the raw `Host` header, and **returns NULL** for a
+ *     request that matched no virtual host. NULL is a normal return, not an
+ *     error: it means "no tenant", which is exactly what a gate needs in order
+ *     to fail closed rather than key policy on a client-supplied string. The
+ *     shim flattens request fields into C strings for the PHP side, so
+ *     forwarding this one requires a NULL check first — `strlen(NULL)` is a
+ *     segfault, and it is reachable from any request with an unknown `Host`.
+ *
+ *   - the `kv_*` slots resolve THE SERVING VHOST'S keyspace on a multi-tenant
+ *     node, not the process-global store. That makes per-tenant state the
+ *     default; node-wide state now needs the appended `kv_*_global` slots,
+ *     which this minor-0 mirror does not declare.
+ */
 
 #define EPHPM_ABI_V1 0x01000000u
 
@@ -75,8 +109,12 @@ typedef struct {
     const char *(*request_remote_ip)(const ephpm_request_t *);
     const char *(*request_header)(const ephpm_request_t *, const char *);
     size_t      (*request_body)(const ephpm_request_t *, const uint8_t **);
+    /* Canonical site key since minor 3, and MAY BE NULL — see the header
+     * comment. Unused by this shim. */
     const char *(*request_vhost_id)(const ephpm_request_t *);
 
+    /* Per-serving-vhost keyspace since minor 3, not the process-global store.
+     * Unused by this shim. */
     int32_t (*kv_get)(const uint8_t *, size_t, uint8_t **, size_t *);
     int32_t (*kv_set)(const uint8_t *, size_t, const uint8_t *, size_t, int64_t);
     int32_t (*kv_set_nx)(const uint8_t *, size_t, const uint8_t *, size_t, int64_t);
@@ -139,7 +177,10 @@ int32_t ephpm_middleware_init(uint32_t abi_version,
                               const char *config_json,
                               const ephpm_host_v1 *host) {
     (void)config_json;
-    /* Refuse if the host's major is newer than we were built for. */
+    /* Refuse if the host's major is newer than we were built for. The MINOR is
+     * deliberately not checked: it is an additive capability level, this shim
+     * uses only minor-0 slots, and refusing a newer minor would mean refusing
+     * to load on every host from here on. */
     if ((abi_version >> 24) != (EPHPM_ABI_V1 >> 24)) return -1;
     if (!host) return -1;
     g_host = host;
